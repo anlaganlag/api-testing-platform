@@ -64,6 +64,15 @@ class APIClient:
             if "Authorization" in headers:
                 del headers["Authorization"]
         
+        # For OpenRouter, ensure the model is set in the request data
+        if self.provider_name == 'openrouter':
+            # Force set the model in the data
+            data['model'] = self.model
+            self.logger.info(f"OpenRouter request - URL: {url}")
+            self.logger.info(f"OpenRouter request - Model: {self.model}")
+            self.logger.info(f"OpenRouter request - Headers: {headers}")
+            self.logger.info(f"OpenRouter request - Data: {json.dumps(data, ensure_ascii=False)[:500]}")
+        
         self.logger.info(f"Making API call to provider: {self.provider_name}")
         self.logger.debug(f"Request URL: {url}")
         
@@ -80,6 +89,11 @@ class APIClient:
                 if response.status_code != 200:
                     error_msg = f"API error ({self.provider_name}, status {response.status_code}): {response.text[:200]}"
                     self.logger.error(error_msg)
+                    
+                    # More detailed logging for OpenRouter
+                    if self.provider_name == 'openrouter':
+                        self.logger.error(f"OpenRouter error details - Full response: {response.text}")
+                        self.logger.error(f"OpenRouter error details - Request data: {json.dumps(data, ensure_ascii=False)[:500]}")
                     
                     # Special error handling
                     if response.status_code == 401:
@@ -312,15 +326,16 @@ class EnhancedBookGenerator:
             'openrouter': {
                 'name': 'openrouter',
                 'api_key': os.getenv('OPENROUTER_API_KEY'),
-                'api_url': os.getenv('OPENROUTER_API_URL'),
-                'model': os.getenv('OPENROUTER_MODEL'),
+                'api_url': os.getenv('OPENROUTER_API_URL', 'https://openrouter.ai/api/v1'),
+                'model': os.getenv('OPENROUTER_MODEL', 'google/gemini-pro'),
                 'headers': lambda key: {
                     "Authorization": f"Bearer {key}",
-                    "HTTP-Referer": "https://github.com/user/repo"
+                    "HTTP-Referer": "https://github.com/user/repo",
+                    "Content-Type": "application/json"
                 },
                 'request_format': self._format_openai_request,
                 'parse_response': self._parse_openai_response,
-                'enabled': bool(os.getenv('OPENROUTER_API_KEY') and os.getenv('OPENROUTER_API_URL') and os.getenv('OPENROUTER_MODEL')),
+                'enabled': bool(os.getenv('OPENROUTER_API_KEY')),
                 'last_used': 0,
                 'success_count': 0,
                 'failure_count': 0,
@@ -455,8 +470,8 @@ class EnhancedBookGenerator:
 
     def _format_openai_request(self, prompt, max_tokens):
         """Format request data for OpenAI-compatible APIs (DeepSeek, OpenRouter, Siliconflow, Ark)."""
+        # We no longer try to set the model here, as it will be set in make_api_call for each provider
         return {
-            "model": self.model if hasattr(self, 'model') else None,
             "messages": [
                 {"role": "system", "content": "你是一位专业的教材作者，擅长创作清晰、专业的教育内容。"},
                 {"role": "user", "content": prompt}
