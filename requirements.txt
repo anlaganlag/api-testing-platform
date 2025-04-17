@@ -9,3 +9,5 @@ docx2txt>=0.8
 markdown>=3.4
 OpenAI>=1.0.0
 tabulate
+numpy>=1.24.0
+python-multipart>=0.0.6
