@@ -3,6 +3,10 @@ from urllib.parse import parse_qs
 import json
 import os
 import sys
+import tempfile
+import uuid
+from threading import Lock
+from time import sleep
 
 # Add the src directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -10,8 +14,30 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 # Import our book generator
 from src.enhanced_book_generator_fixed import EnhancedBookGenerator
 
+# 添加全局状态存储
+GENERATION_STATUS = {}
+status_lock = Lock()
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == '/download':
+            # 处理下载请求
+            book_id = self.path.split('=')[-1]
+            file_path = GENERATION_STATUS.get(book_id, {}).get('file_path')
+            
+            if file_path and os.path.exists(file_path):
+                self.send_response(200)
+                self.send_header('Content-type', 'application/octet-stream')
+                self.send_header('Content-Disposition', f'attachment; filename="generated_book_{book_id}.docx"')
+                self.end_headers()
+                
+                with open(file_path, 'rb') as f:
+                    self.wfile.write(f.read())
+                return
+            else:
+                self.send_error(404, "File not found")
+                return
+
         self.path = self.path.rstrip('/')
         if self.path == '':
             self.path = '/'
@@ -31,6 +57,9 @@ class handler(BaseHTTPRequestHandler):
                 body { padding: 20px; font-family: "Microsoft YaHei", "Hiragino Sans GB", "Heiti SC", sans-serif; }
                 .container { max-width: 800px; margin: 0 auto; }
                 .form-group { margin-bottom: 15px; }
+                .progress { height: 20px; margin: 10px 0; }
+                #uploadProgress, #generateProgress { width: 0%; transition: width 0.3s; }
+                .hidden { display: none; }
             </style>
         </head>
         <body>
@@ -38,29 +67,28 @@ class handler(BaseHTTPRequestHandler):
                 <h1 class="mb-4">教材生成器</h1>
                 <div class="card mb-4">
                     <div class="card-body">
+                        <h5 class="card-title">上传书籍大纲</h5>
+                        <form id="uploadForm" enctype="multipart/form-data">
+                            <div class="form-group">
+                                <input type="file" class="form-control" id="excelFile" name="excel_file" accept=".xlsx">
+                            </div>
+                            <button type="submit" class="btn btn-primary">上传文件</button>
+                        </form>
+                        <div class="progress">
+                            <div id="uploadProgress" class="progress-bar" role="progressbar"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card mb-4">
+                    <div class="card-body">
                         <h5 class="card-title">生成样例章节</h5>
-                        <form action="/api/generate" method="POST">
-                            <div class="form-group">
-                                <label for="excel_path">Excel 路径:</label>
-                                <input type="text" class="form-control" id="excel_path" name="excel_path" value="data/book_outline.xlsx">
+                        <form id="generateForm">
+                            <div class="progress">
+                                <div id="generateProgress" class="progress-bar" role="progressbar"></div>
                             </div>
-                            <div class="form-group">
-                                <label for="provider">API 提供商:</label>
-                                <select class="form-control" id="provider" name="provider">
-                                    <option value="all">所有提供商</option>
-                                    <option value="deepseek">DeepSeek</option>
-                                    <option value="gemini">Gemini</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="siliconflow">SiliconFlow</option>
-                                    <option value="ark">Ark</option>
-                                    <option value="dashscope">灵积（DashScope）</option>
-                                </select>
+                            <div id="downloadSection" class="hidden">
+                                <a id="downloadLink" class="btn btn-success">下载书籍</a>
                             </div>
-                            <div class="form-group">
-                                <label for="chapter_index">章节索引:</label>
-                                <input type="number" class="form-control" id="chapter_index" name="chapter_index" value="0">
-                            </div>
-                            <button type="submit" class="btn btn-primary">生成样例章节</button>
                         </form>
                     </div>
                 </div>
@@ -81,6 +109,50 @@ class handler(BaseHTTPRequestHandler):
                     </div>
                 </div>
             </div>
+            <script>
+                // 文件上传处理
+                document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const formData = new FormData();
+                    formData.append('excel_file', document.getElementById('excelFile').files[0]);
+
+                    const response = await fetch('/api/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    document.getElementById('excel_path').value = result.file_path;
+                });
+
+                // 生成处理
+                document.getElementById('generateForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.target);
+                    
+                    const response = await fetch('/api/generate', {
+                        method: 'POST',
+                        body: new URLSearchParams(formData)
+                    });
+                    
+                    const { book_id } = await response.json();
+                    checkStatus(book_id);
+                });
+
+                async function checkStatus(book_id) {
+                    const res = await fetch(`/api/status?book_id=${book_id}`);
+                    const { progress, status, download_url } = await res.json();
+                    
+                    document.getElementById('generateProgress').style.width = `${progress}%`;
+                    
+                    if (status === 'completed') {
+                        document.getElementById('downloadSection').classList.remove('hidden');
+                        document.getElementById('downloadLink').href = download_url;
+                    } else if (status === 'processing') {
+                        setTimeout(() => checkStatus(book_id), 1000);
+                    }
+                }
+            </script>
         </body>
         </html>
         """
@@ -89,44 +161,101 @@ class handler(BaseHTTPRequestHandler):
         return
     
     def do_POST(self):
-        if self.path == '/api/generate':
+        if self.path == '/api/upload':
+            # 处理文件上传
+            content_type = self.headers['Content-Type']
+            if not content_type.startswith('multipart/form-data'):
+                return self.send_error(400, "Bad request")
+            
+            # 创建临时目录
+            temp_dir = tempfile.mkdtemp()
+            file_path = os.path.join(temp_dir, 'uploaded_file.xlsx')
+            
+            # 解析文件上传
+            content = self.rfile.read(int(self.headers['Content-Length']))
+            with open(file_path, 'wb') as f:
+                f.write(content.split(b'\r\n\r\n')[1].split(b'\r\n--')[0])
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'file_path': file_path}).encode())
+            return
+
+        elif self.path == '/api/generate':
+            # 修改生成逻辑
+            book_id = str(uuid.uuid4())
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length).decode('utf-8')
             form_data = parse_qs(post_data)
             
-            excel_path = form_data.get('excel_path', ['data/book_outline.xlsx'])[0]
-            provider = form_data.get('provider', ['all'])[0]
-            chapter_index = int(form_data.get('chapter_index', ['0'])[0])
-            
-            try:
-                # Initialize the generator
-                generator = EnhancedBookGenerator(excel_path, provider=provider)
-                
-                # Generate a sample chapter
-                success = generator.generate_sample_chapter(chapter_index)
-                
-                # Send response
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json; charset=utf-8')
-                self.end_headers()
-                
-                response = {
-                    'success': success,
-                    'message': '章节生成成功！' if success else '章节生成失败'
+            # 初始化状态
+            with status_lock:
+                GENERATION_STATUS[book_id] = {
+                    'progress': 0,
+                    'status': 'processing',
+                    'file_path': None
                 }
-                self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
+
+            # 启动后台生成任务
+            def generate_task():
+                try:
+                    generator = EnhancedBookGenerator(
+                        form_data['excel_path'][0],
+                        provider=form_data.get('provider', ['all'])[0]
+                    )
+                    
+                    # 生成章节并更新进度
+                    total_chapters = len(generator.outline_data)
+                    for i in range(total_chapters):
+                        generator.generate_sample_chapter(i)
+                        with status_lock:
+                            GENERATION_STATUS[book_id]['progress'] = (i+1)/total_chapters*100
+                        sleep(0.5)  # 模拟生成时间
+                    
+                    # 保存生成结果
+                    output_path = os.path.join(tempfile.gettempdir(), f'book_{book_id}.docx')
+                    generator.save_book(output_path)
+                    
+                    with status_lock:
+                        GENERATION_STATUS[book_id].update({
+                            'status': 'completed',
+                            'file_path': output_path
+                        })
+                        
+                except Exception as e:
+                    with status_lock:
+                        GENERATION_STATUS[book_id]['status'] = 'error'
+                        GENERATION_STATUS[book_id]['error'] = str(e)
+
+            # 启动后台线程
+            import threading
+            threading.Thread(target=generate_task).start()
+
+            # 返回生成ID
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'book_id': book_id}).encode())
+            return
+
+        elif self.path == '/api/status':
+            # 添加状态查询接口
+            book_id = parse_qs(self.path.split('?')[-1]).get('book_id', [''])[0]
             
-            except Exception as e:
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json; charset=utf-8')
-                self.end_headers()
-                
-                response = {
-                    'success': False,
-                    'message': f'错误: {str(e)}'
-                }
-                self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
-        
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            
+            status = GENERATION_STATUS.get(book_id, {})
+            response = {
+                'progress': status.get('progress', 0),
+                'status': status.get('status', 'not_found'),
+                'download_url': f'/download?book_id={book_id}' if status.get('file_path') else None
+            }
+            self.wfile.write(json.dumps(response).encode())
+            return
+
         else:
             self.send_response(404)
             self.send_header('Content-type', 'application/json; charset=utf-8')
