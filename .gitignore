@@ -1,0 +1,30 @@
+# Ignore temp directory
+/temp/
+
+# Ignore virtual environment directory
+/venv/
+
+# Ignore macOS .DS_Store files
+.DS_Store
+
+# Ignore Python cache and build directories
+__pycache__/
+*.py[cod]
+
+# Ignore IDE specific files
+.vscode/
+.idea/
+
+# Ignore local environment files
+.env.local
+
+# Ignore log files
+*.log
+
+# Ignore compiled files
+*.class
+*.exe
+*.dll
+
+# Ignore system files
+Thumbs.db 

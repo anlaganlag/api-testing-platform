@@ -1,0 +1,4 @@
+I need to write a book based on an input excel file that contains the outline of the book
+For each chapter, I need to call the LLM to write about 3000~4000 words
+We need to do this for each chapter and connect them to become a book
+We need to make sure that the overall content in the book is cohesive
