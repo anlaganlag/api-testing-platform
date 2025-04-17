@@ -120,10 +120,11 @@ class handler(BaseHTTPRequestHandler):
                                 <input type="number" class="form-control" id="chapter_index" name="chapter_index" value="0">
                             </div>
                             <button type="submit" class="btn btn-primary">生成样例章节</button>
-                            <div class="progress">
+                            <div class="progress mt-3">
                                 <div id="generateProgress" class="progress-bar" role="progressbar"></div>
                             </div>
-                            <div id="downloadSection" class="hidden">
+                            <div id="statusMessage" class="mt-2 text-muted"></div>
+                            <div id="downloadSection" class="hidden mt-3">
                                 <a id="downloadLink" class="btn btn-success">下载书籍</a>
                             </div>
                         </form>
@@ -183,9 +184,13 @@ class handler(BaseHTTPRequestHandler):
                         
                         let result;
                         try {
+                            // 克隆响应以便在需要时可以读取文本内容
+                            const responseClone = response.clone();
                             result = await response.json();
                         } catch (parseError) {
-                            console.error('解析上传响应失败:', await response.text());
+                            // 解析JSON失败时读取文本内容
+                            const responseText = await response.text();
+                            console.error('解析上传响应失败:', responseText);
                             throw new Error('服务器返回了无效数据');
                         }
                         
@@ -215,9 +220,21 @@ class handler(BaseHTTPRequestHandler):
                         return;
                     }
                     
+                    // 重置状态显示
+                    const progressBar = document.getElementById('generateProgress');
+                    progressBar.style.width = '0%';
+                    progressBar.classList.remove('bg-danger');  // 移除可能的错误样式
+                    setStatusMessage('准备生成章节...');
+                    document.getElementById('downloadSection').classList.add('hidden');
+                    
                     const formData = new FormData(e.target);
                     
                     try {
+                        // 禁用提交按钮
+                        const submitButton = e.target.querySelector('button[type="submit"]');
+                        submitButton.disabled = true;
+                        submitButton.innerHTML = '生成中...';
+                        
                         const response = await fetch('/api/generate', {
                             method: 'POST',
                             body: new URLSearchParams(formData)
@@ -229,13 +246,20 @@ class handler(BaseHTTPRequestHandler):
                         
                         const data = await response.json();
                         if (data.book_id) {
+                            setStatusMessage('开始生成章节，请稍候...');
                             checkStatus(data.book_id);
                         } else {
-                            alert('生成请求发送失败');
+                            throw new Error('服务器未返回有效的任务ID');
                         }
                     } catch (error) {
                         console.error('生成错误:', error);
-                        alert('生成请求出错，请重试');
+                        setStatusMessage(`生成请求失败: ${error.message}`);
+                        progressBar.classList.add('bg-danger');
+                        
+                        // 重新启用提交按钮
+                        const submitButton = e.target.querySelector('button[type="submit"]');
+                        submitButton.disabled = false;
+                        submitButton.innerHTML = '生成样例章节';
                     }
                 });
 
@@ -247,11 +271,16 @@ class handler(BaseHTTPRequestHandler):
                         }
                         
                         let data;
+                        let responseText = '';
                         try {
+                            // 克隆响应以便在需要时可以读取文本内容
+                            const responseClone = response.clone();
                             data = await response.json();
                         } catch (parseError) {
-                            console.error('解析JSON失败', await response.text());
-                            alert('服务器返回了无效数据，查看控制台了解详情');
+                            // 解析JSON失败时读取文本内容
+                            responseText = await response.text();
+                            console.error('解析JSON失败', responseText);
+                            setStatusMessage('服务器返回了无效数据，请查看控制台了解详情');
                             return;
                         }
                         
@@ -259,17 +288,28 @@ class handler(BaseHTTPRequestHandler):
                         progressBar.style.width = `${data.progress}%`;
                         
                         if (data.status === 'completed') {
+                            setStatusMessage('生成完成！您可以下载文件了。');
                             document.getElementById('downloadSection').classList.remove('hidden');
                             document.getElementById('downloadLink').href = data.download_url;
-                            alert('书籍生成完成，可以下载了！');
                         } else if (data.status === 'processing') {
+                            setStatusMessage(`正在生成中... (${Math.round(data.progress)}%)`);
                             setTimeout(() => checkStatus(book_id), 1000);
                         } else if (data.status === 'error') {
-                            alert('生成过程中出错: ' + (data.error || '未知错误'));
+                            setStatusMessage(`生成过程中出错: ${data.error || '未知错误'}`);
+                            progressBar.classList.add('bg-danger');
+                        } else {
+                            setStatusMessage(`未知状态: ${data.status}`);
                         }
                     } catch (error) {
                         console.error('状态查询错误:', error);
+                        setStatusMessage('查询生成状态时出错，请刷新页面重试');
                     }
+                }
+                
+                // 辅助函数：设置状态消息
+                function setStatusMessage(message) {
+                    const statusElement = document.getElementById('statusMessage');
+                    statusElement.textContent = message;
                 }
             </script>
         </body>
