@@ -43,7 +43,12 @@ class APIClient:
     
     def make_api_call(self, prompt: str, max_tokens: int) -> Optional[str]:
         """Make an API call with error handling and retry logic."""
-        # 实现请求频率限制
+        # Check if this provider is enabled
+        if not self.enabled:
+            self.logger.warning(f"Provider {self.provider_name} is disabled due to previous failures")
+            return None
+        
+        # Implement rate limiting
         self._respect_rate_limit()
         
         headers = self.get_headers(self.api_key)
@@ -62,74 +67,96 @@ class APIClient:
         self.logger.info(f"Making API call to provider: {self.provider_name}")
         self.logger.debug(f"Request URL: {url}")
         
-        # 实现重试逻辑
+        # Implement retry logic
         for retry_attempt in range(self.max_retries + 1):
             try:
-                # 记录请求时间
+                # Record request time
                 self.last_request_time = time.time()
                 start_time = time.time()
                 response = requests.post(url, headers=headers, json=data, params=params, timeout=60)
                 elapsed_time = time.time() - start_time
                 
-                # 处理不同类型的错误
+                # Handle different types of errors
                 if response.status_code != 200:
                     error_msg = f"API error ({self.provider_name}, status {response.status_code}): {response.text[:200]}"
                     self.logger.error(error_msg)
                     
-                    # 特定错误处理
+                    # Special error handling
                     if response.status_code == 401:
                         self.logger.error(f"Authentication error for {self.provider_name}. Check API key format.")
-                        # 认证错误不重试
+                        # Don't retry authentication errors
                         break
                     elif response.status_code == 429 or response.status_code == 422:
-                        # 速率限制错误，增加重试延迟
+                        # Rate limit errors, increase retry delay
+                        with self.lock:
+                            self.failure_count += 1
+                            self.consecutive_failures += 1
+                            
+                        # Disable provider if it has too many consecutive failures
+                        if self.consecutive_failures >= 3:
+                            self.logger.warning(f"Disabling provider {self.provider_name} due to {self.consecutive_failures} consecutive failures")
+                            self.enabled = False
+                            return None
+                            
                         retry_delay = self._calculate_backoff_time(retry_attempt)
                         self.logger.warning(f"Rate limit exceeded for {self.provider_name}. Retrying in {retry_delay} seconds...")
                         time.sleep(retry_delay)
                         continue
                     elif response.status_code >= 500:
-                        # 服务器错误，可以重试
+                        # Server errors, we can retry
+                        with self.lock:
+                            self.failure_count += 1
+                            self.consecutive_failures += 1
+                        
                         retry_delay = self._calculate_backoff_time(retry_attempt)
                         self.logger.warning(f"Server error for {self.provider_name}. Retrying in {retry_delay} seconds...")
                         time.sleep(retry_delay)
                         continue
                     
-                    # 其他错误，更新统计信息但不重试
+                    # Other errors, update stats but don't retry
                     with self.lock:
                         self.failure_count += 1
                         self.consecutive_failures += 1
                     
-                    # 如果还有重试次数，继续尝试
+                    # If we still have retries left, continue trying
                     if retry_attempt < self.max_retries:
                         retry_delay = self._calculate_backoff_time(retry_attempt)
                         self.logger.warning(f"Retrying {self.provider_name} in {retry_delay} seconds (attempt {retry_attempt+1}/{self.max_retries})")
                         time.sleep(retry_delay)
                         continue
                     else:
+                        # Disable provider if it has too many consecutive failures
+                        if self.consecutive_failures >= 3:
+                            self.logger.warning(f"Disabling provider {self.provider_name} due to {self.consecutive_failures} consecutive failures")
+                            self.enabled = False
                         return None
                 
-                # 成功获取响应
+                # Successfully received response
                 result = response.json()
                 content = self.parse_response(result)
                 
                 if not content:
                     self.logger.warning(f"Empty content returned from {self.provider_name}")
                     
-                    # 更新统计信息
+                    # Update statistics
                     with self.lock:
                         self.failure_count += 1
                         self.consecutive_failures += 1
                     
-                    # 如果还有重试次数，继续尝试
+                    # If we still have retries left, continue trying
                     if retry_attempt < self.max_retries:
                         retry_delay = self._calculate_backoff_time(retry_attempt)
                         self.logger.warning(f"Retrying {self.provider_name} in {retry_delay} seconds (attempt {retry_attempt+1}/{self.max_retries})")
                         time.sleep(retry_delay)
                         continue
                     else:
+                        # Disable provider if it has too many consecutive failures
+                        if self.consecutive_failures >= 3:
+                            self.logger.warning(f"Disabling provider {self.provider_name} due to {self.consecutive_failures} consecutive failures")
+                            self.enabled = False
                         return None
                 
-                # 更新成功统计信息
+                # Update success statistics
                 with self.lock:
                     self.last_used = time.time()
                     self.success_count += 1
@@ -141,34 +168,38 @@ class APIClient:
             except Exception as e:
                 self.logger.error(f"API call exception ({self.provider_name}): {str(e)}")
                 
-                # 更新统计信息
+                # Update statistics
                 with self.lock:
                     self.failure_count += 1
                     self.consecutive_failures += 1
                 
-                # 如果还有重试次数，继续尝试
+                # If we still have retries left, continue trying
                 if retry_attempt < self.max_retries:
                     retry_delay = self._calculate_backoff_time(retry_attempt)
                     self.logger.warning(f"Retrying {self.provider_name} in {retry_delay} seconds (attempt {retry_attempt+1}/{self.max_retries})")
                     time.sleep(retry_delay)
                     continue
                 else:
+                    # Disable provider if it has too many consecutive failures
+                    if self.consecutive_failures >= 3:
+                        self.logger.warning(f"Disabling provider {self.provider_name} due to {self.consecutive_failures} consecutive failures")
+                        self.enabled = False
                     return None
         
         return None
     
     def _respect_rate_limit(self):
-        """确保请求不超过API的速率限制"""
-        # 根据不同提供商设置不同的最小请求间隔
-        min_request_interval = 1.0  # 默认最小间隔1秒
+        """Ensure requests don't exceed API rate limits"""
+        # Set different minimum request intervals for different providers
+        min_request_interval = 1.0  # Default minimum interval is 1 second
         
-        # 为不同提供商设置不同的请求间隔
+        # Set specific intervals for different providers
         if self.provider_name == 'deepseek':
-            min_request_interval = 2.0  # DeepSeek可能需要更长的间隔
+            min_request_interval = 2.0  # DeepSeek needs longer intervals
         elif self.provider_name == 'gemini':
             min_request_interval = 1.5
         
-        # 如果距离上次请求时间不足最小间隔，则等待
+        # If time since last request is less than minimum interval, wait
         elapsed = time.time() - self.last_request_time
         if elapsed < min_request_interval:
             sleep_time = min_request_interval - elapsed
@@ -176,10 +207,10 @@ class APIClient:
             time.sleep(sleep_time)
     
     def _calculate_backoff_time(self, retry_attempt: int) -> float:
-        """计算指数退避时间"""
-        # 基础延迟为2秒，每次重试翻倍，并添加一些随机性
+        """Calculate exponential backoff time"""
+        # Base delay is 2 seconds, doubled for each retry, with some randomness
         backoff_time = self.retry_delay * (2 ** retry_attempt) + random.uniform(0, 1)
-        return min(backoff_time, 60)  # 最大延迟60秒
+        return min(backoff_time, 60)  # Maximum delay of 60 seconds
     
     def get_stats(self) -> Dict[str, Any]:
         """Get current provider statistics."""
@@ -520,17 +551,22 @@ class EnhancedBookGenerator:
 
     def _select_best_provider(self, exclude_provider=None) -> str:
         """Select the best provider based on performance metrics."""
-        available_providers = [p for p in self.available_providers if p != exclude_provider]
+        # Only include enabled providers that aren't explicitly excluded
+        available_providers = [
+            p for p in self.available_providers 
+            if (p != exclude_provider and self.api_clients[p].enabled)
+        ]
+        
         if not available_providers:
             return None
         
-        # 改进提供商选择算法，优先考虑成功率和连续失败次数
+        # Sort providers by success rate and consecutive failures
         sorted_providers = sorted(
             available_providers,
             key=lambda p: (
-                self.api_clients[p].consecutive_failures,  # 连续失败次数少的优先
-                -self.api_clients[p].success_count / max(1, self.api_clients[p].success_count + self.api_clients[p].failure_count),  # 成功率高的优先
-                -(self.api_clients[p].last_used or 0)  # 最近未使用的优先
+                self.api_clients[p].consecutive_failures,  # Fewer consecutive failures preferred
+                -self.api_clients[p].success_count / max(1, self.api_clients[p].success_count + self.api_clients[p].failure_count),  # Higher success rate preferred
+                -(self.api_clients[p].last_used or 0)  # Recent unused providers preferred
             )
         )
         
