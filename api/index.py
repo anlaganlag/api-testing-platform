@@ -178,30 +178,33 @@ class handler(BaseHTTPRequestHandler):
                         
                         progressBar.style.width = '100%';
                         
+                        // 先克隆响应，以便可以多次读取
+                        const responseForText = response.clone();
+                        
                         if (!response.ok) {
-                            throw new Error('上传失败: ' + response.status);
+                            const errorText = await responseForText.text();
+                            console.error('上传服务器错误:', errorText);
+                            throw new Error(`上传失败: ${response.status}`);
                         }
                         
-                        let result;
                         try {
-                            // 克隆响应以便在需要时可以读取文本内容
-                            const responseClone = response.clone();
-                            result = await response.json();
+                            const result = await response.json();
+                            
+                            if (result && result.success) {
+                                // 存储文件路径到隐藏字段
+                                document.getElementById('excel_path').value = result.file_path;
+                                alert('文件上传成功，可以开始生成书籍');
+                                // 启用生成按钮
+                                document.querySelector('#generateForm button[type="submit"]').disabled = false;
+                            } else {
+                                throw new Error(result.message || '上传失败');
+                            }
                         } catch (parseError) {
-                            // 解析JSON失败时读取文本内容
-                            const responseText = await response.text();
-                            console.error('解析上传响应失败:', responseText);
+                            // JSON解析错误
+                            console.error('JSON解析错误:', parseError);
+                            const responseText = await responseForText.text();
+                            console.error('原始响应内容:', responseText);
                             throw new Error('服务器返回了无效数据');
-                        }
-                        
-                        if (result && result.success) {
-                            // 存储文件路径到隐藏字段
-                            document.getElementById('excel_path').value = result.file_path;
-                            alert('文件上传成功，可以开始生成书籍');
-                            // 启用生成按钮
-                            document.querySelector('#generateForm button[type="submit"]').disabled = false;
-                        } else {
-                            throw new Error(result.message || '上传失败');
                         }
                     } catch (error) {
                         console.error('上传错误:', error);
@@ -240,16 +243,29 @@ class handler(BaseHTTPRequestHandler):
                             body: new URLSearchParams(formData)
                         });
                         
+                        // 先克隆响应，以便可以多次读取
+                        const responseForText = response.clone();
+                        
                         if (!response.ok) {
-                            throw new Error('生成请求失败');
+                            const errorText = await responseForText.text();
+                            console.error('生成服务器错误:', errorText);
+                            throw new Error(`生成请求失败: ${response.status}`);
                         }
                         
-                        const data = await response.json();
-                        if (data.book_id) {
-                            setStatusMessage('开始生成章节，请稍候...');
-                            checkStatus(data.book_id);
-                        } else {
-                            throw new Error('服务器未返回有效的任务ID');
+                        try {
+                            const data = await response.json();
+                            if (data.book_id) {
+                                setStatusMessage('开始生成章节，请稍候...');
+                                checkStatus(data.book_id);
+                            } else {
+                                throw new Error('服务器未返回有效的任务ID');
+                            }
+                        } catch (parseError) {
+                            // JSON解析错误
+                            console.error('JSON解析错误:', parseError);
+                            const responseText = await responseForText.text();
+                            console.error('原始响应内容:', responseText);
+                            throw new Error('服务器返回了无效的JSON数据');
                         }
                     } catch (error) {
                         console.error('生成错误:', error);
@@ -267,38 +283,40 @@ class handler(BaseHTTPRequestHandler):
                     try {
                         const response = await fetch(`/api/status?book_id=${book_id}`);
                         if (!response.ok) {
-                            throw new Error('状态查询失败');
+                            const errorText = await response.text();
+                            console.error('服务器错误:', errorText);
+                            throw new Error(`状态查询失败: ${response.status}`);
                         }
                         
-                        let data;
-                        let responseText = '';
+                        // 先克隆响应，以便可以多次读取
+                        const responseForText = response.clone();
+                        
                         try {
-                            // 克隆响应以便在需要时可以读取文本内容
-                            const responseClone = response.clone();
-                            data = await response.json();
+                            // 使用原始响应解析JSON
+                            const data = await response.json();
+                            
+                            const progressBar = document.getElementById('generateProgress');
+                            progressBar.style.width = `${data.progress}%`;
+                            
+                            if (data.status === 'completed') {
+                                setStatusMessage('生成完成！您可以下载文件了。');
+                                document.getElementById('downloadSection').classList.remove('hidden');
+                                document.getElementById('downloadLink').href = data.download_url;
+                            } else if (data.status === 'processing') {
+                                setStatusMessage(`正在生成中... (${Math.round(data.progress)}%)`);
+                                setTimeout(() => checkStatus(book_id), 1000);
+                            } else if (data.status === 'error') {
+                                setStatusMessage(`生成过程中出错: ${data.error || '未知错误'}`);
+                                progressBar.classList.add('bg-danger');
+                            } else {
+                                setStatusMessage(`未知状态: ${data.status}`);
+                            }
                         } catch (parseError) {
-                            // 解析JSON失败时读取文本内容
-                            responseText = await response.text();
-                            console.error('解析JSON失败', responseText);
+                            // JSON解析错误时，使用克隆的响应读取文本
+                            console.error('JSON解析错误:', parseError);
+                            const responseText = await responseForText.text();
+                            console.error('原始响应内容:', responseText);
                             setStatusMessage('服务器返回了无效数据，请查看控制台了解详情');
-                            return;
-                        }
-                        
-                        const progressBar = document.getElementById('generateProgress');
-                        progressBar.style.width = `${data.progress}%`;
-                        
-                        if (data.status === 'completed') {
-                            setStatusMessage('生成完成！您可以下载文件了。');
-                            document.getElementById('downloadSection').classList.remove('hidden');
-                            document.getElementById('downloadLink').href = data.download_url;
-                        } else if (data.status === 'processing') {
-                            setStatusMessage(`正在生成中... (${Math.round(data.progress)}%)`);
-                            setTimeout(() => checkStatus(book_id), 1000);
-                        } else if (data.status === 'error') {
-                            setStatusMessage(`生成过程中出错: ${data.error || '未知错误'}`);
-                            progressBar.classList.add('bg-danger');
-                        } else {
-                            setStatusMessage(`未知状态: ${data.status}`);
                         }
                     } catch (error) {
                         console.error('状态查询错误:', error);
