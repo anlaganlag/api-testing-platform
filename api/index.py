@@ -147,6 +147,11 @@ class handler(BaseHTTPRequestHandler):
                 </div>
             </div>
             <script>
+                // 禁用生成按钮直到文件上传成功
+                document.addEventListener('DOMContentLoaded', function() {
+                    document.querySelector('#generateForm button[type="submit"]').disabled = true;
+                });
+                
                 // 文件上传处理
                 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                     e.preventDefault();
@@ -158,12 +163,12 @@ class handler(BaseHTTPRequestHandler):
                         return;
                     }
                     
-                    formData.append('excel_file', fileInput.files[0]);
+                    // 显示上传进度
+                    const progressBar = document.getElementById('uploadProgress');
+                    progressBar.style.width = '50%';
                     
                     try {
-                        // 显示上传进度
-                        const progressBar = document.getElementById('uploadProgress');
-                        progressBar.style.width = '50%';
+                        formData.append('excel_file', fileInput.files[0]);
                         
                         const response = await fetch('/api/upload', {
                             method: 'POST',
@@ -173,21 +178,30 @@ class handler(BaseHTTPRequestHandler):
                         progressBar.style.width = '100%';
                         
                         if (!response.ok) {
-                            throw new Error('上传失败');
+                            throw new Error('上传失败: ' + response.status);
                         }
                         
-                        const result = await response.json();
+                        let result;
+                        try {
+                            result = await response.json();
+                        } catch (parseError) {
+                            console.error('解析上传响应失败:', await response.text());
+                            throw new Error('服务器返回了无效数据');
+                        }
                         
-                        if (result.success) {
+                        if (result && result.success) {
                             // 存储文件路径到隐藏字段
                             document.getElementById('excel_path').value = result.file_path;
                             alert('文件上传成功，可以开始生成书籍');
+                            // 启用生成按钮
+                            document.querySelector('#generateForm button[type="submit"]').disabled = false;
                         } else {
-                            alert('上传失败: ' + result.message);
+                            throw new Error(result.message || '上传失败');
                         }
                     } catch (error) {
                         console.error('上传错误:', error);
-                        alert('上传出错，请重试');
+                        progressBar.style.width = '0%';
+                        alert('上传出错: ' + error.message);
                     }
                 });
 
@@ -227,12 +241,20 @@ class handler(BaseHTTPRequestHandler):
 
                 async function checkStatus(book_id) {
                     try {
-                        const res = await fetch(`/api/status?book_id=${book_id}`);
-                        if (!res.ok) {
+                        const response = await fetch(`/api/status?book_id=${book_id}`);
+                        if (!response.ok) {
                             throw new Error('状态查询失败');
                         }
                         
-                        const data = await res.json();
+                        let data;
+                        try {
+                            data = await response.json();
+                        } catch (parseError) {
+                            console.error('解析JSON失败', await response.text());
+                            alert('服务器返回了无效数据，查看控制台了解详情');
+                            return;
+                        }
+                        
                         const progressBar = document.getElementById('generateProgress');
                         progressBar.style.width = `${data.progress}%`;
                         
@@ -246,8 +268,7 @@ class handler(BaseHTTPRequestHandler):
                             alert('生成过程中出错: ' + (data.error || '未知错误'));
                         }
                     } catch (error) {
-                        console.error('解析JSON失败', await res.text());
-                        alert('服务器返回了无效数据，查看控制台了解详情');
+                        console.error('状态查询错误:', error);
                     }
                 }
             </script>
