@@ -11,6 +11,8 @@
     }
   ],
   "routes": [
+    { "src": "/api/(.*)", "dest": "api/index.py" },
+    { "src": "/download", "dest": "api/index.py" },
     { "src": "/(.*)", "dest": "api/index.py" }
   ],
   "env": {

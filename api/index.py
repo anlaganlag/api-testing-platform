@@ -20,7 +20,29 @@ status_lock = Lock()
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith('/download'):
+        # 首先处理API类请求
+        if self.path.startswith('/api/status'):
+            # 添加状态查询接口
+            query_string = self.path.split('?')
+            book_id = ''
+            
+            if len(query_string) > 1:
+                params = parse_qs(query_string[1])
+                book_id = params.get('book_id', [''])[0]
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.end_headers()
+            
+            status = GENERATION_STATUS.get(book_id, {})
+            response = {
+                'progress': status.get('progress', 0),
+                'status': status.get('status', 'not_found'),
+                'download_url': f'/download?book_id={book_id}' if status.get('file_path') else None
+            }
+            self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
+            return
+        elif self.path.startswith('/download'):
             # 处理下载请求
             query_string = self.path.split('?')
             book_id = ''
@@ -55,287 +77,287 @@ class handler(BaseHTTPRequestHandler):
                 self.send_error(404, "File not found")
                 return
 
+        # 处理普通页面请求
         self.path = self.path.rstrip('/')
-        if self.path == '':
-            self.path = '/'
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html; charset=utf-8')
-        self.end_headers()
-        
-        html_content = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>书籍生成 API</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                body { padding: 20px; font-family: "Microsoft YaHei", "Hiragino Sans GB", "Heiti SC", sans-serif; }
-                .container { max-width: 800px; margin: 0 auto; }
-                .form-group { margin-bottom: 15px; }
-                .progress { height: 20px; margin: 10px 0; }
-                #uploadProgress, #generateProgress { width: 0%; transition: width 0.3s; }
-                .hidden { display: none; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1 class="mb-4">教材生成器</h1>
-                <div class="card mb-4">
-                    <div class="card-body">
-                        <h5 class="card-title">上传书籍大纲</h5>
-                        <form id="uploadForm" enctype="multipart/form-data">
-                            <div class="form-group">
-                                <input type="file" class="form-control" id="excelFile" name="excel_file" accept=".xlsx">
+        if self.path == '' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            
+            html_content = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>书籍生成 API</title>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+                <style>
+                    body { padding: 20px; font-family: "Microsoft YaHei", "Hiragino Sans GB", "Heiti SC", sans-serif; }
+                    .container { max-width: 800px; margin: 0 auto; }
+                    .form-group { margin-bottom: 15px; }
+                    .progress { height: 20px; margin: 10px 0; }
+                    #uploadProgress, #generateProgress { width: 0%; transition: width 0.3s; }
+                    .hidden { display: none; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1 class="mb-4">教材生成器</h1>
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">上传书籍大纲</h5>
+                            <form id="uploadForm" enctype="multipart/form-data">
+                                <div class="form-group">
+                                    <input type="file" class="form-control" id="excelFile" name="excel_file" accept=".xlsx">
+                                </div>
+                                <button type="submit" class="btn btn-primary">上传文件</button>
+                            </form>
+                            <div class="progress">
+                                <div id="uploadProgress" class="progress-bar" role="progressbar"></div>
                             </div>
-                            <button type="submit" class="btn btn-primary">上传文件</button>
-                        </form>
-                        <div class="progress">
-                            <div id="uploadProgress" class="progress-bar" role="progressbar"></div>
+                        </div>
+                    </div>
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">生成样例章节</h5>
+                            <form id="generateForm">
+                                <div class="form-group">
+                                    <input type="hidden" id="excel_path" name="excel_path" value="">
+                                </div>
+                                <div class="form-group">
+                                    <label for="provider">API 提供商:</label>
+                                    <select class="form-control" id="provider" name="provider">
+                                        <option value="all">所有提供商</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="gemini">Gemini</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                        <option value="siliconflow">SiliconFlow</option>
+                                        <option value="ark">Ark</option>
+                                        <option value="dashscope">灵积（DashScope）</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="chapter_index">章节索引:</label>
+                                    <input type="number" class="form-control" id="chapter_index" name="chapter_index" value="0">
+                                </div>
+                                <button type="submit" class="btn btn-primary">生成样例章节</button>
+                                <div class="progress mt-3">
+                                    <div id="generateProgress" class="progress-bar" role="progressbar"></div>
+                                </div>
+                                <div id="statusMessage" class="mt-2 text-muted"></div>
+                                <div id="downloadSection" class="hidden mt-3">
+                                    <a id="downloadLink" class="btn btn-success">下载书籍</a>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">API 文档</h5>
+                            <p>此 API 允许您基于 Excel 大纲生成书籍内容。</p>
+                            <h6>接口:</h6>
+                            <ul>
+                                <li><code>POST /api/generate</code> - 生成样例章节</li>
+                            </ul>
+                            <h6>参数:</h6>
+                            <ul>
+                                <li><code>excel_path</code> - Excel 大纲文件路径</li>
+                                <li><code>provider</code> - 使用的 API 提供商 (deepseek, gemini, openrouter, siliconflow, ark, dashscope, all)</li>
+                                <li><code>chapter_index</code> - 要生成的章节索引 (从 0 开始)</li>
+                            </ul>
                         </div>
                     </div>
                 </div>
-                <div class="card mb-4">
-                    <div class="card-body">
-                        <h5 class="card-title">生成样例章节</h5>
-                        <form id="generateForm">
-                            <div class="form-group">
-                                <input type="hidden" id="excel_path" name="excel_path" value="">
-                            </div>
-                            <div class="form-group">
-                                <label for="provider">API 提供商:</label>
-                                <select class="form-control" id="provider" name="provider">
-                                    <option value="all">所有提供商</option>
-                                    <option value="deepseek">DeepSeek</option>
-                                    <option value="gemini">Gemini</option>
-                                    <option value="openrouter">OpenRouter</option>
-                                    <option value="siliconflow">SiliconFlow</option>
-                                    <option value="ark">Ark</option>
-                                    <option value="dashscope">灵积（DashScope）</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="chapter_index">章节索引:</label>
-                                <input type="number" class="form-control" id="chapter_index" name="chapter_index" value="0">
-                            </div>
-                            <button type="submit" class="btn btn-primary">生成样例章节</button>
-                            <div class="progress mt-3">
-                                <div id="generateProgress" class="progress-bar" role="progressbar"></div>
-                            </div>
-                            <div id="statusMessage" class="mt-2 text-muted"></div>
-                            <div id="downloadSection" class="hidden mt-3">
-                                <a id="downloadLink" class="btn btn-success">下载书籍</a>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">API 文档</h5>
-                        <p>此 API 允许您基于 Excel 大纲生成书籍内容。</p>
-                        <h6>接口:</h6>
-                        <ul>
-                            <li><code>POST /api/generate</code> - 生成样例章节</li>
-                        </ul>
-                        <h6>参数:</h6>
-                        <ul>
-                            <li><code>excel_path</code> - Excel 大纲文件路径</li>
-                            <li><code>provider</code> - 使用的 API 提供商 (deepseek, gemini, openrouter, siliconflow, ark, dashscope, all)</li>
-                            <li><code>chapter_index</code> - 要生成的章节索引 (从 0 开始)</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-            <script>
-                // 禁用生成按钮直到文件上传成功
-                document.addEventListener('DOMContentLoaded', function() {
-                    document.querySelector('#generateForm button[type="submit"]').disabled = true;
-                });
-                
-                // 文件上传处理
-                document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    const formData = new FormData();
-                    const fileInput = document.getElementById('excelFile');
+                <script>
+                    // 禁用生成按钮直到文件上传成功
+                    document.addEventListener('DOMContentLoaded', function() {
+                        document.querySelector('#generateForm button[type="submit"]').disabled = true;
+                    });
                     
-                    if (!fileInput.files || fileInput.files.length === 0) {
-                        alert('请选择一个Excel文件');
-                        return;
-                    }
-                    
-                    // 显示上传进度
-                    const progressBar = document.getElementById('uploadProgress');
-                    progressBar.style.width = '50%';
-                    
-                    try {
-                        formData.append('excel_file', fileInput.files[0]);
+                    // 文件上传处理
+                    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        const formData = new FormData();
+                        const fileInput = document.getElementById('excelFile');
                         
-                        const response = await fetch('/api/upload', {
-                            method: 'POST',
-                            body: formData
-                        });
-                        
-                        progressBar.style.width = '100%';
-                        
-                        // 先克隆响应，以便可以多次读取
-                        const responseForText = response.clone();
-                        
-                        if (!response.ok) {
-                            const errorText = await responseForText.text();
-                            console.error('上传服务器错误:', errorText);
-                            throw new Error(`上传失败: ${response.status}`);
+                        if (!fileInput.files || fileInput.files.length === 0) {
+                            alert('请选择一个Excel文件');
+                            return;
                         }
+                        
+                        // 显示上传进度
+                        const progressBar = document.getElementById('uploadProgress');
+                        progressBar.style.width = '50%';
                         
                         try {
-                            const result = await response.json();
+                            formData.append('excel_file', fileInput.files[0]);
                             
-                            if (result && result.success) {
-                                // 存储文件路径到隐藏字段
-                                document.getElementById('excel_path').value = result.file_path;
-                                alert('文件上传成功，可以开始生成书籍');
-                                // 启用生成按钮
-                                document.querySelector('#generateForm button[type="submit"]').disabled = false;
-                            } else {
-                                throw new Error(result.message || '上传失败');
+                            const response = await fetch('/api/upload', {
+                                method: 'POST',
+                                body: formData
+                            });
+                            
+                            progressBar.style.width = '100%';
+                            
+                            // 先克隆响应，以便可以多次读取
+                            const responseForText = response.clone();
+                            
+                            if (!response.ok) {
+                                const errorText = await responseForText.text();
+                                console.error('上传服务器错误:', errorText);
+                                throw new Error(`上传失败: ${response.status}`);
                             }
-                        } catch (parseError) {
-                            // JSON解析错误
-                            console.error('JSON解析错误:', parseError);
-                            const responseText = await responseForText.text();
-                            console.error('原始响应内容:', responseText);
-                            throw new Error('服务器返回了无效数据');
+                            
+                            try {
+                                const result = await response.json();
+                                
+                                if (result && result.success) {
+                                    // 存储文件路径到隐藏字段
+                                    document.getElementById('excel_path').value = result.file_path;
+                                    alert('文件上传成功，可以开始生成书籍');
+                                    // 启用生成按钮
+                                    document.querySelector('#generateForm button[type="submit"]').disabled = false;
+                                } else {
+                                    throw new Error(result.message || '上传失败');
+                                }
+                            } catch (parseError) {
+                                // JSON解析错误
+                                console.error('JSON解析错误:', parseError);
+                                const responseText = await responseForText.text();
+                                console.error('原始响应内容:', responseText);
+                                throw new Error('服务器返回了无效数据');
+                            }
+                        } catch (error) {
+                            console.error('上传错误:', error);
+                            progressBar.style.width = '0%';
+                            alert('上传出错: ' + error.message);
                         }
-                    } catch (error) {
-                        console.error('上传错误:', error);
+                    });
+
+                    // 生成处理
+                    document.getElementById('generateForm').addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        
+                        const excelPath = document.getElementById('excel_path').value;
+                        if (!excelPath) {
+                            alert('请先上传Excel文件');
+                            return;
+                        }
+                        
+                        // 重置状态显示
+                        const progressBar = document.getElementById('generateProgress');
                         progressBar.style.width = '0%';
-                        alert('上传出错: ' + error.message);
-                    }
-                });
-
-                // 生成处理
-                document.getElementById('generateForm').addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    
-                    const excelPath = document.getElementById('excel_path').value;
-                    if (!excelPath) {
-                        alert('请先上传Excel文件');
-                        return;
-                    }
-                    
-                    // 重置状态显示
-                    const progressBar = document.getElementById('generateProgress');
-                    progressBar.style.width = '0%';
-                    progressBar.classList.remove('bg-danger');  // 移除可能的错误样式
-                    setStatusMessage('准备生成章节...');
-                    document.getElementById('downloadSection').classList.add('hidden');
-                    
-                    const formData = new FormData(e.target);
-                    
-                    try {
-                        // 禁用提交按钮
-                        const submitButton = e.target.querySelector('button[type="submit"]');
-                        submitButton.disabled = true;
-                        submitButton.innerHTML = '生成中...';
+                        progressBar.classList.remove('bg-danger');  // 移除可能的错误样式
+                        setStatusMessage('准备生成章节...');
+                        document.getElementById('downloadSection').classList.add('hidden');
                         
-                        const response = await fetch('/api/generate', {
-                            method: 'POST',
-                            body: new URLSearchParams(formData)
-                        });
-                        
-                        // 先克隆响应，以便可以多次读取
-                        const responseForText = response.clone();
-                        
-                        if (!response.ok) {
-                            const errorText = await responseForText.text();
-                            console.error('生成服务器错误:', errorText);
-                            throw new Error(`生成请求失败: ${response.status}`);
-                        }
+                        const formData = new FormData(e.target);
                         
                         try {
-                            const data = await response.json();
-                            if (data.book_id) {
-                                setStatusMessage('开始生成章节，请稍候...');
-                                checkStatus(data.book_id);
-                            } else {
-                                throw new Error('服务器未返回有效的任务ID');
+                            // 禁用提交按钮
+                            const submitButton = e.target.querySelector('button[type="submit"]');
+                            submitButton.disabled = true;
+                            submitButton.innerHTML = '生成中...';
+                            
+                            const response = await fetch('/api/generate', {
+                                method: 'POST',
+                                body: new URLSearchParams(formData)
+                            });
+                            
+                            // 先克隆响应，以便可以多次读取
+                            const responseForText = response.clone();
+                            
+                            if (!response.ok) {
+                                const errorText = await responseForText.text();
+                                console.error('生成服务器错误:', errorText);
+                                throw new Error(`生成请求失败: ${response.status}`);
                             }
-                        } catch (parseError) {
-                            // JSON解析错误
-                            console.error('JSON解析错误:', parseError);
-                            const responseText = await responseForText.text();
-                            console.error('原始响应内容:', responseText);
-                            throw new Error('服务器返回了无效的JSON数据');
+                            
+                            try {
+                                const data = await response.json();
+                                if (data.book_id) {
+                                    setStatusMessage('开始生成章节，请稍候...');
+                                    checkStatus(data.book_id);
+                                } else {
+                                    throw new Error('服务器未返回有效的任务ID');
+                                }
+                            } catch (parseError) {
+                                // JSON解析错误
+                                console.error('JSON解析错误:', parseError);
+                                const responseText = await responseForText.text();
+                                console.error('原始响应内容:', responseText);
+                                throw new Error('服务器返回了无效的JSON数据');
+                            }
+                        } catch (error) {
+                            console.error('生成错误:', error);
+                            setStatusMessage(`生成请求失败: ${error.message}`);
+                            progressBar.classList.add('bg-danger');
+                            
+                            // 重新启用提交按钮
+                            const submitButton = e.target.querySelector('button[type="submit"]');
+                            submitButton.disabled = false;
+                            submitButton.innerHTML = '生成样例章节';
                         }
-                    } catch (error) {
-                        console.error('生成错误:', error);
-                        setStatusMessage(`生成请求失败: ${error.message}`);
-                        progressBar.classList.add('bg-danger');
-                        
-                        // 重新启用提交按钮
-                        const submitButton = e.target.querySelector('button[type="submit"]');
-                        submitButton.disabled = false;
-                        submitButton.innerHTML = '生成样例章节';
-                    }
-                });
+                    });
 
-                async function checkStatus(book_id) {
-                    try {
-                        const response = await fetch(`/api/status?book_id=${book_id}`);
-                        if (!response.ok) {
-                            const errorText = await response.text();
-                            console.error('服务器错误:', errorText);
-                            throw new Error(`状态查询失败: ${response.status}`);
-                        }
-                        
-                        // 先克隆响应，以便可以多次读取
-                        const responseForText = response.clone();
-                        
+                    async function checkStatus(book_id) {
                         try {
-                            // 使用原始响应解析JSON
-                            const data = await response.json();
-                            
-                            const progressBar = document.getElementById('generateProgress');
-                            progressBar.style.width = `${data.progress}%`;
-                            
-                            if (data.status === 'completed') {
-                                setStatusMessage('生成完成！您可以下载文件了。');
-                                document.getElementById('downloadSection').classList.remove('hidden');
-                                document.getElementById('downloadLink').href = data.download_url;
-                            } else if (data.status === 'processing') {
-                                setStatusMessage(`正在生成中... (${Math.round(data.progress)}%)`);
-                                setTimeout(() => checkStatus(book_id), 1000);
-                            } else if (data.status === 'error') {
-                                setStatusMessage(`生成过程中出错: ${data.error || '未知错误'}`);
-                                progressBar.classList.add('bg-danger');
-                            } else {
-                                setStatusMessage(`未知状态: ${data.status}`);
+                            const response = await fetch(`/api/status?book_id=${book_id}`);
+                            if (!response.ok) {
+                                const errorText = await response.text();
+                                console.error('服务器错误:', errorText);
+                                throw new Error(`状态查询失败: ${response.status}`);
                             }
-                        } catch (parseError) {
-                            // JSON解析错误时，使用克隆的响应读取文本
-                            console.error('JSON解析错误:', parseError);
-                            const responseText = await responseForText.text();
-                            console.error('原始响应内容:', responseText);
-                            setStatusMessage('服务器返回了无效数据，请查看控制台了解详情');
+                            
+                            // 先克隆响应，以便可以多次读取
+                            const responseForText = response.clone();
+                            
+                            try {
+                                // 使用原始响应解析JSON
+                                const data = await response.json();
+                                
+                                const progressBar = document.getElementById('generateProgress');
+                                progressBar.style.width = `${data.progress}%`;
+                                
+                                if (data.status === 'completed') {
+                                    setStatusMessage('生成完成！您可以下载文件了。');
+                                    document.getElementById('downloadSection').classList.remove('hidden');
+                                    document.getElementById('downloadLink').href = data.download_url;
+                                } else if (data.status === 'processing') {
+                                    setStatusMessage(`正在生成中... (${Math.round(data.progress)}%)`);
+                                    setTimeout(() => checkStatus(book_id), 1000);
+                                } else if (data.status === 'error') {
+                                    setStatusMessage(`生成过程中出错: ${data.error || '未知错误'}`);
+                                    progressBar.classList.add('bg-danger');
+                                } else {
+                                    setStatusMessage(`未知状态: ${data.status}`);
+                                }
+                            } catch (parseError) {
+                                // JSON解析错误时，使用克隆的响应读取文本
+                                console.error('JSON解析错误:', parseError);
+                                const responseText = await responseForText.text();
+                                console.error('原始响应内容:', responseText);
+                                setStatusMessage('服务器返回了无效数据，请查看控制台了解详情');
+                            }
+                        } catch (error) {
+                            console.error('状态查询错误:', error);
+                            setStatusMessage('查询生成状态时出错，请刷新页面重试');
                         }
-                    } catch (error) {
-                        console.error('状态查询错误:', error);
-                        setStatusMessage('查询生成状态时出错，请刷新页面重试');
                     }
-                }
-                
-                // 辅助函数：设置状态消息
-                function setStatusMessage(message) {
-                    const statusElement = document.getElementById('statusMessage');
-                    statusElement.textContent = message;
-                }
-            </script>
-        </body>
-        </html>
-        """
-        
-        self.wfile.write(html_content.encode('utf-8'))
-        return
+                    
+                    // 辅助函数：设置状态消息
+                    function setStatusMessage(message) {
+                        const statusElement = document.getElementById('statusMessage');
+                        statusElement.textContent = message;
+                    }
+                </script>
+            </body>
+            </html>
+            """
+            
+            self.wfile.write(html_content.encode('utf-8'))
+            return
     
     def do_POST(self):
         if self.path == '/api/upload':
@@ -457,28 +479,6 @@ class handler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json; charset=utf-8')
             self.end_headers()
             self.wfile.write(json.dumps({'book_id': book_id}, ensure_ascii=False).encode('utf-8'))
-            return
-
-        elif self.path == '/api/status':
-            # 添加状态查询接口
-            query_string = self.path.split('?')
-            book_id = ''
-            
-            if len(query_string) > 1:
-                params = parse_qs(query_string[1])
-                book_id = params.get('book_id', [''])[0]
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json; charset=utf-8')
-            self.end_headers()
-            
-            status = GENERATION_STATUS.get(book_id, {})
-            response = {
-                'progress': status.get('progress', 0),
-                'status': status.get('status', 'not_found'),
-                'download_url': f'/download?book_id={book_id}' if status.get('file_path') else None
-            }
-            self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
             return
 
         else:
