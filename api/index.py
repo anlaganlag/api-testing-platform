@@ -83,6 +83,26 @@ class handler(BaseHTTPRequestHandler):
                     <div class="card-body">
                         <h5 class="card-title">生成样例章节</h5>
                         <form id="generateForm">
+                            <div class="form-group">
+                                <input type="hidden" id="excel_path" name="excel_path" value="">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider">API 提供商:</label>
+                                <select class="form-control" id="provider" name="provider">
+                                    <option value="all">所有提供商</option>
+                                    <option value="deepseek">DeepSeek</option>
+                                    <option value="gemini">Gemini</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="siliconflow">SiliconFlow</option>
+                                    <option value="ark">Ark</option>
+                                    <option value="dashscope">灵积（DashScope）</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="chapter_index">章节索引:</label>
+                                <input type="number" class="form-control" id="chapter_index" name="chapter_index" value="0">
+                            </div>
+                            <button type="submit" class="btn btn-primary">生成样例章节</button>
                             <div class="progress">
                                 <div id="generateProgress" class="progress-bar" role="progressbar"></div>
                             </div>
@@ -114,42 +134,102 @@ class handler(BaseHTTPRequestHandler):
                 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const formData = new FormData();
-                    formData.append('excel_file', document.getElementById('excelFile').files[0]);
-
-                    const response = await fetch('/api/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
+                    const fileInput = document.getElementById('excelFile');
                     
-                    const result = await response.json();
-                    document.getElementById('excel_path').value = result.file_path;
+                    if (!fileInput.files || fileInput.files.length === 0) {
+                        alert('请选择一个Excel文件');
+                        return;
+                    }
+                    
+                    formData.append('excel_file', fileInput.files[0]);
+                    
+                    try {
+                        // 显示上传进度
+                        const progressBar = document.getElementById('uploadProgress');
+                        progressBar.style.width = '50%';
+                        
+                        const response = await fetch('/api/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        progressBar.style.width = '100%';
+                        
+                        if (!response.ok) {
+                            throw new Error('上传失败');
+                        }
+                        
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            // 存储文件路径到隐藏字段
+                            document.getElementById('excel_path').value = result.file_path;
+                            alert('文件上传成功，可以开始生成书籍');
+                        } else {
+                            alert('上传失败: ' + result.message);
+                        }
+                    } catch (error) {
+                        console.error('上传错误:', error);
+                        alert('上传出错，请重试');
+                    }
                 });
 
                 // 生成处理
                 document.getElementById('generateForm').addEventListener('submit', async (e) => {
                     e.preventDefault();
+                    
+                    const excelPath = document.getElementById('excel_path').value;
+                    if (!excelPath) {
+                        alert('请先上传Excel文件');
+                        return;
+                    }
+                    
                     const formData = new FormData(e.target);
                     
-                    const response = await fetch('/api/generate', {
-                        method: 'POST',
-                        body: new URLSearchParams(formData)
-                    });
-                    
-                    const { book_id } = await response.json();
-                    checkStatus(book_id);
+                    try {
+                        const response = await fetch('/api/generate', {
+                            method: 'POST',
+                            body: new URLSearchParams(formData)
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error('生成请求失败');
+                        }
+                        
+                        const data = await response.json();
+                        if (data.book_id) {
+                            checkStatus(data.book_id);
+                        } else {
+                            alert('生成请求发送失败');
+                        }
+                    } catch (error) {
+                        console.error('生成错误:', error);
+                        alert('生成请求出错，请重试');
+                    }
                 });
 
                 async function checkStatus(book_id) {
-                    const res = await fetch(`/api/status?book_id=${book_id}`);
-                    const { progress, status, download_url } = await res.json();
-                    
-                    document.getElementById('generateProgress').style.width = `${progress}%`;
-                    
-                    if (status === 'completed') {
-                        document.getElementById('downloadSection').classList.remove('hidden');
-                        document.getElementById('downloadLink').href = download_url;
-                    } else if (status === 'processing') {
-                        setTimeout(() => checkStatus(book_id), 1000);
+                    try {
+                        const res = await fetch(`/api/status?book_id=${book_id}`);
+                        if (!res.ok) {
+                            throw new Error('状态查询失败');
+                        }
+                        
+                        const data = await res.json();
+                        const progressBar = document.getElementById('generateProgress');
+                        progressBar.style.width = `${data.progress}%`;
+                        
+                        if (data.status === 'completed') {
+                            document.getElementById('downloadSection').classList.remove('hidden');
+                            document.getElementById('downloadLink').href = data.download_url;
+                            alert('书籍生成完成，可以下载了！');
+                        } else if (data.status === 'processing') {
+                            setTimeout(() => checkStatus(book_id), 1000);
+                        } else if (data.status === 'error') {
+                            alert('生成过程中出错: ' + (data.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('状态查询错误:', error);
                     }
                 }
             </script>
@@ -163,24 +243,51 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == '/api/upload':
             # 处理文件上传
-            content_type = self.headers['Content-Type']
-            if not content_type.startswith('multipart/form-data'):
-                return self.send_error(400, "Bad request")
-            
-            # 创建临时目录
-            temp_dir = tempfile.mkdtemp()
-            file_path = os.path.join(temp_dir, 'uploaded_file.xlsx')
-            
-            # 解析文件上传
-            content = self.rfile.read(int(self.headers['Content-Length']))
-            with open(file_path, 'wb') as f:
-                f.write(content.split(b'\r\n\r\n')[1].split(b'\r\n--')[0])
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'file_path': file_path}).encode())
-            return
+            try:
+                content_type = self.headers['Content-Type']
+                if not content_type or not content_type.startswith('multipart/form-data'):
+                    return self.send_error(400, "错误的请求格式，需要multipart/form-data")
+                
+                # 解析边界
+                boundary = content_type.split('=')[1].strip()
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                
+                # 创建临时目录
+                temp_dir = tempfile.mkdtemp()
+                file_path = os.path.join(temp_dir, 'uploaded_file.xlsx')
+                
+                # 简化的multipart解析
+                file_data_start = post_data.find(b'\r\n\r\n') + 4
+                file_data_end = post_data.rfind(b'\r\n--' + boundary.encode() + b'--')
+                if file_data_start > 0 and file_data_end > 0:
+                    file_data = post_data[file_data_start:file_data_end]
+                    with open(file_path, 'wb') as f:
+                        f.write(file_data)
+                
+                # 返回成功响应
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.end_headers()
+                
+                response = {
+                    'success': True,
+                    'file_path': file_path,
+                    'message': '文件上传成功'
+                }
+                self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.end_headers()
+                
+                response = {
+                    'success': False,
+                    'message': f'上传文件错误: {str(e)}'
+                }
+                self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
+                return
 
         elif self.path == '/api/generate':
             # 修改生成逻辑
