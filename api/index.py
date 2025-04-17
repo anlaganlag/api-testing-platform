@@ -246,7 +246,8 @@ class handler(BaseHTTPRequestHandler):
                             alert('生成过程中出错: ' + (data.error || '未知错误'));
                         }
                     } catch (error) {
-                        console.error('状态查询错误:', error);
+                        console.error('解析JSON失败', await res.text());
+                        alert('服务器返回了无效数据，查看控制台了解详情');
                     }
                 }
             </script>
