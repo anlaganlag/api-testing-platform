@@ -20,15 +20,32 @@ status_lock = Lock()
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/download':
+        if self.path.startswith('/download'):
             # 处理下载请求
-            book_id = self.path.split('=')[-1]
+            query_string = self.path.split('?')
+            book_id = ''
+            
+            if len(query_string) > 1:
+                params = parse_qs(query_string[1])
+                book_id = params.get('book_id', [''])[0]
+            
             file_path = GENERATION_STATUS.get(book_id, {}).get('file_path')
             
             if file_path and os.path.exists(file_path):
                 self.send_response(200)
-                self.send_header('Content-type', 'application/octet-stream')
-                self.send_header('Content-Disposition', f'attachment; filename="generated_book_{book_id}.docx"')
+                
+                # 根据文件类型设置Content-Type
+                if file_path.endswith('.docx'):
+                    self.send_header('Content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+                    filename = f"generated_book_{book_id}.docx"
+                elif file_path.endswith('.md'):
+                    self.send_header('Content-type', 'text/markdown')
+                    filename = f"generated_chapter_{book_id}.md"
+                else:
+                    self.send_header('Content-type', 'application/octet-stream')
+                    filename = f"generated_file_{book_id}{os.path.splitext(file_path)[1]}"
+                
+                self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
                 self.end_headers()
                 
                 with open(file_path, 'rb') as f:
@@ -312,28 +329,44 @@ class handler(BaseHTTPRequestHandler):
                         provider=form_data.get('provider', ['all'])[0]
                     )
                     
-                    # 生成章节并更新进度
-                    total_chapters = len(generator.outline_data)
-                    for i in range(total_chapters):
-                        generator.generate_sample_chapter(i)
-                        with status_lock:
-                            GENERATION_STATUS[book_id]['progress'] = (i+1)/total_chapters*100
-                        sleep(0.5)  # 模拟生成时间
+                    # 加载大纲以获取章节数
+                    generator.load_outline()
                     
-                    # 保存生成结果
-                    output_path = os.path.join(tempfile.gettempdir(), f'book_{book_id}.docx')
-                    generator.save_book(output_path)
+                    # 生成章节并更新进度
+                    chapter_index = int(form_data.get('chapter_index', ['0'])[0])
+                    
+                    # 仅生成单个章节，而不是全部
+                    success = generator.generate_sample_chapter(chapter_index)
                     
                     with status_lock:
-                        GENERATION_STATUS[book_id].update({
-                            'status': 'completed',
-                            'file_path': output_path
-                        })
+                        if success:
+                            # 获取生成的文件路径
+                            is_production = os.environ.get('VERCEL') == '1'
+                            if is_production:
+                                output_dir = "/tmp/output"
+                            else:
+                                output_dir = "output"
+                                
+                            # 查找生成的markdown文件
+                            import glob
+                            md_files = glob.glob(os.path.join(output_dir, "*.md"))
+                            if md_files:
+                                newest_file = max(md_files, key=os.path.getmtime)
+                                GENERATION_STATUS[book_id].update({
+                                    'status': 'completed',
+                                    'file_path': newest_file,
+                                    'progress': 100
+                                })
+                            else:
+                                raise Exception("未找到生成的文件")
+                        else:
+                            raise Exception("章节生成失败")
                         
                 except Exception as e:
                     with status_lock:
                         GENERATION_STATUS[book_id]['status'] = 'error'
                         GENERATION_STATUS[book_id]['error'] = str(e)
+                        print(f"生成错误: {str(e)}")  # 调试输出
 
             # 启动后台线程
             import threading
@@ -341,17 +374,22 @@ class handler(BaseHTTPRequestHandler):
 
             # 返回生成ID
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-type', 'application/json; charset=utf-8')
             self.end_headers()
-            self.wfile.write(json.dumps({'book_id': book_id}).encode())
+            self.wfile.write(json.dumps({'book_id': book_id}, ensure_ascii=False).encode('utf-8'))
             return
 
         elif self.path == '/api/status':
             # 添加状态查询接口
-            book_id = parse_qs(self.path.split('?')[-1]).get('book_id', [''])[0]
+            query_string = self.path.split('?')
+            book_id = ''
+            
+            if len(query_string) > 1:
+                params = parse_qs(query_string[1])
+                book_id = params.get('book_id', [''])[0]
             
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-type', 'application/json; charset=utf-8')
             self.end_headers()
             
             status = GENERATION_STATUS.get(book_id, {})
@@ -360,7 +398,7 @@ class handler(BaseHTTPRequestHandler):
                 'status': status.get('status', 'not_found'),
                 'download_url': f'/download?book_id={book_id}' if status.get('file_path') else None
             }
-            self.wfile.write(json.dumps(response).encode())
+            self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
             return
 
         else:
