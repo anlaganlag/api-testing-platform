@@ -16,67 +16,67 @@ class handler(BaseHTTPRequestHandler):
         if self.path == '':
             self.path = '/'
         self.send_response(200)
-        self.send_header('Content-type', 'text/html')
+        self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
         
         html_content = """
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Book Generation API</title>
+            <title>书籍生成 API</title>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
             <style>
-                body { padding: 20px; }
+                body { padding: 20px; font-family: "Microsoft YaHei", "Hiragino Sans GB", "Heiti SC", sans-serif; }
                 .container { max-width: 800px; margin: 0 auto; }
                 .form-group { margin-bottom: 15px; }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1 class="mb-4">Book Generation API</h1>
+                <h1 class="mb-4">教材生成器</h1>
                 <div class="card mb-4">
                     <div class="card-body">
-                        <h5 class="card-title">Generate Sample Chapter</h5>
+                        <h5 class="card-title">生成样例章节</h5>
                         <form action="/api/generate" method="POST">
                             <div class="form-group">
-                                <label for="excel_path">Excel Path:</label>
+                                <label for="excel_path">Excel 路径:</label>
                                 <input type="text" class="form-control" id="excel_path" name="excel_path" value="data/book_outline.xlsx">
                             </div>
                             <div class="form-group">
-                                <label for="provider">API Provider:</label>
+                                <label for="provider">API 提供商:</label>
                                 <select class="form-control" id="provider" name="provider">
-                                    <option value="all">All Providers</option>
+                                    <option value="all">所有提供商</option>
                                     <option value="deepseek">DeepSeek</option>
                                     <option value="gemini">Gemini</option>
                                     <option value="openrouter">OpenRouter</option>
                                     <option value="siliconflow">SiliconFlow</option>
                                     <option value="ark">Ark</option>
-                                    <option value="dashscope">DashScope</option>
+                                    <option value="dashscope">灵积（DashScope）</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label for="chapter_index">Chapter Index:</label>
+                                <label for="chapter_index">章节索引:</label>
                                 <input type="number" class="form-control" id="chapter_index" name="chapter_index" value="0">
                             </div>
-                            <button type="submit" class="btn btn-primary">Generate Sample Chapter</button>
+                            <button type="submit" class="btn btn-primary">生成样例章节</button>
                         </form>
                     </div>
                 </div>
                 <div class="card">
                     <div class="card-body">
-                        <h5 class="card-title">API Documentation</h5>
-                        <p>This API allows you to generate book content based on an Excel outline.</p>
-                        <h6>Endpoints:</h6>
+                        <h5 class="card-title">API 文档</h5>
+                        <p>此 API 允许您基于 Excel 大纲生成书籍内容。</p>
+                        <h6>接口:</h6>
                         <ul>
-                            <li><code>POST /api/generate</code> - Generate a sample chapter</li>
+                            <li><code>POST /api/generate</code> - 生成样例章节</li>
                         </ul>
-                        <h6>Parameters:</h6>
+                        <h6>参数:</h6>
                         <ul>
-                            <li><code>excel_path</code> - Path to the Excel outline file</li>
-                            <li><code>provider</code> - API provider to use (deepseek, gemini, openrouter, siliconflow, ark, dashscope, all)</li>
-                            <li><code>chapter_index</code> - Index of the chapter to generate (starts at 0)</li>
+                            <li><code>excel_path</code> - Excel 大纲文件路径</li>
+                            <li><code>provider</code> - 使用的 API 提供商 (deepseek, gemini, openrouter, siliconflow, ark, dashscope, all)</li>
+                            <li><code>chapter_index</code> - 要生成的章节索引 (从 0 开始)</li>
                         </ul>
                     </div>
                 </div>
@@ -85,7 +85,7 @@ class handler(BaseHTTPRequestHandler):
         </html>
         """
         
-        self.wfile.write(html_content.encode())
+        self.wfile.write(html_content.encode('utf-8'))
         return
     
     def do_POST(self):
@@ -107,33 +107,33 @@ class handler(BaseHTTPRequestHandler):
                 
                 # Send response
                 self.send_response(200)
-                self.send_header('Content-type', 'application/json')
+                self.send_header('Content-type', 'application/json; charset=utf-8')
                 self.end_headers()
                 
                 response = {
                     'success': success,
-                    'message': 'Chapter generation completed' if success else 'Chapter generation failed'
+                    'message': '章节生成成功！' if success else '章节生成失败'
                 }
-                self.wfile.write(json.dumps(response).encode())
+                self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
             
             except Exception as e:
                 self.send_response(500)
-                self.send_header('Content-type', 'application/json')
+                self.send_header('Content-type', 'application/json; charset=utf-8')
                 self.end_headers()
                 
                 response = {
                     'success': False,
-                    'message': f'Error: {str(e)}'
+                    'message': f'错误: {str(e)}'
                 }
-                self.wfile.write(json.dumps(response).encode())
+                self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
         
         else:
             self.send_response(404)
-            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-type', 'application/json; charset=utf-8')
             self.end_headers()
             
             response = {
                 'success': False,
-                'message': 'Endpoint not found'
+                'message': '未找到请求的接口'
             }
-            self.wfile.write(json.dumps(response).encode()) 
+            self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8')) 

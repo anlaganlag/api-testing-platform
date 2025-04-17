@@ -28,3 +28,4 @@ __pycache__/
 
 # Ignore system files
 Thumbs.db 
+.vercel

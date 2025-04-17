@@ -240,7 +240,17 @@ class APIClient:
 
 class ContentCache:
     """A disk-based cache for generated content to avoid unnecessary API calls."""
-    def __init__(self, cache_dir: str = "temp/cache"):
+    def __init__(self, cache_dir: str = None):
+        # Determine if we're in a production environment like Vercel
+        is_production = os.environ.get('VERCEL') == '1'
+        
+        # Set appropriate cache directory
+        if cache_dir is None:
+            if is_production:
+                cache_dir = "/tmp/cache"
+            else:
+                cache_dir = "temp/cache"
+                
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True, parents=True)
         self.lock = Lock()  # Lock for thread-safe file operations
@@ -436,8 +446,17 @@ class EnhancedBookGenerator:
         
     def _setup_logging(self):
         """Set up logging configuration."""
-        # Create logs directory if it doesn't exist
-        log_dir = Path("logs")
+        # Determine if we're in a production environment like Vercel
+        is_production = os.environ.get('VERCEL') == '1'
+
+        # Choose the appropriate log directory
+        if is_production:
+            # Use /tmp directory which is writable in serverless environments
+            log_dir = Path("/tmp/logs")
+        else:
+            # Use local logs directory for development
+            log_dir = Path("logs")
+            
         log_dir.mkdir(exist_ok=True)
         
         # Configure logger
@@ -721,8 +740,15 @@ class EnhancedBookGenerator:
 
     def generate_section_content(self, module: str, topic: str, outline_point: str, description: str) -> Optional[str]:
         """Generate content for a single section using the configured API providers."""
+        # Determine if we're in a production environment
+        is_production = os.environ.get('VERCEL') == '1'
+        
         # Create temp directory if it doesn't exist
-        temp_dir = Path("temp/sections")
+        if is_production:
+            temp_dir = Path("/tmp/sections")
+        else:
+            temp_dir = Path("temp/sections")
+            
         temp_dir.mkdir(exist_ok=True, parents=True)
         
         # Generate a safe filename from the topic and outline point
@@ -773,7 +799,15 @@ class EnhancedBookGenerator:
 
     def stitch_chapter_content(self, module: str, topic: str, sections_content: List[str]) -> Optional[str]:
         """Stitch together section contents into a coherent chapter."""
-        temp_dir = Path("temp/chapters")
+        # Determine if we're in a production environment
+        is_production = os.environ.get('VERCEL') == '1'
+        
+        # Create temp directory if it doesn't exist
+        if is_production:
+            temp_dir = Path("/tmp/chapters")
+        else:
+            temp_dir = Path("temp/chapters")
+            
         temp_dir.mkdir(exist_ok=True, parents=True)
         
         # Generate a safe filename from the topic
@@ -951,7 +985,13 @@ class EnhancedBookGenerator:
                     self.logger.error(f"Error generating chapter {chapter_count}/{total_chapters}: {topic} - {str(e)}")
         
         # Save the document
-        output_dir = Path("output")
+        is_production = os.environ.get('VERCEL') == '1'
+        
+        if is_production:
+            output_dir = Path("/tmp/output")
+        else:
+            output_dir = Path("output")
+            
         output_dir.mkdir(exist_ok=True)
         output_file = output_dir / "完整教材.docx"
         self.doc.save(output_file)
@@ -1016,8 +1056,14 @@ class EnhancedBookGenerator:
             self.logger.error(f"Failed to generate sample chapter: {topic}")
             return False
         
-        # Save the chapter as a markdown file
-        output_dir = Path("output")
+        # Save the sample chapter to file
+        is_production = os.environ.get('VERCEL') == '1'
+        
+        if is_production:
+            output_dir = Path("/tmp/output")
+        else:
+            output_dir = Path("output")
+            
         output_dir.mkdir(exist_ok=True)
         safe_filename = "".join(x for x in topic if x.isalnum() or x in (' ', '-', '_')).rstrip()
         output_file = output_dir / f"{safe_filename}.md"
